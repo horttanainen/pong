@@ -21,19 +21,19 @@ var
   channel = new events.EventEmitter(),
   
   configMap = {
-    graphics : null,
-    players : null,
-    movement : null
+    graphics  : null,
+    players   : null,
+    movement  : null,
+    game      : null
   },
   
   server;
 
 
 channel.on( 'join', function ( id, socket ) {
-  var player;
-  
-  player = configMap.players.add_player( id, socket );
-  configMap.graphics.initialize_map( player );
+  configMap.players.add_player( id, socket );
+  configMap.game.init_telnet_game( socket );
+  configMap.graphics.init_map( id );
 });
 
 channel.on( 'broadcast', function( senderId, message ) {
@@ -41,23 +41,9 @@ channel.on( 'broadcast', function( senderId, message ) {
 });
 
 server   = net.createServer( function ( socket ) {
-  var id  = socket.remoteAddress + ':' + socket.remotePort,
-    buf   = new Buffer(3);
+  var id  = socket.remoteAddress + ':' + socket.remotePort;
 
   socket.setEncoding( 'utf8' );
-
-  buf[0] = 255;
-  buf[1] = 253;
-  buf[2] = 34;
-
-  socket.write( buf );
-
-  buf[0] = 255;
-  buf[1] = 251;
-  buf[2] = 1;
-  socket.write( buf );
-  socket.write('\033[?25l' );
-  socket.write( '\033[2J' );
 
   socket.on( 'data', function ( chunk ) {
     
@@ -78,5 +64,6 @@ server   = net.createServer( function ( socket ) {
 configMap.graphics  = pong.graphics;
 configMap.players   = pong.players;
 configMap.movement  = pong.movement;
+configMap.game      = pong.game;
 server.listen( 23 );
 //---------------------- END START SERVER ---------------------

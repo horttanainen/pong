@@ -17,16 +17,19 @@ var
   graphics,
   players,
   movement,
+  game,
   configMap = {
     map_height  : 24,
     map_width   : 80,
     pad_height  : 4,
-    map_floor       : ' ',
+    map_floor       : '#',
     map_border_tile : '=',
     pad_tile        : '+',
     ball_tile       : 'o',
     player_one      : 0,
-    player_two      : 1
+    player_two      : 1,
+    move_up         : 'w',
+    move_down       : 's'
   },
   stateMap = {
   },
@@ -34,24 +37,77 @@ var
 
 //----------------- END MODULE SCOPE VARIABLES ---------------
 //---------------- BEGIN PUBLIC METHODS ----------------------
+game = ( function () {
+  var init_telnet_game;
+
+  init_telnet_game = function ( socket ) {
+  var buf   = new Buffer(6);
+  buf[0] = 255;
+  buf[1] = 253;
+  buf[2] = 34;
+  buf[3] = 255;
+  buf[4] = 251;
+  buf[5] = 1;
+  socket.write( buf );
+  socket.write('\033[?25l' );
+  socket.write( '\033[2J' );
+  };
+
+  return {
+    init_telnet_game : init_telnet_game
+  };
+}());
 movement = ( function () {
   var
-    move;
+  move, move_up, make_the_move,
+  move_down;
 
-  move = function ( senderId, command ) {
-    var
-    new_move, index,
-           player_list;
-
-  player_list = players.get_players();
-
-  new_move = graphics.make_paddle( player_list[ senderId ].player_no, 5 );
-
-  for ( index in player_list ) {
-    if ( player_list.hasOwnProperty( index ) ) {
-      player_list[ index ].socket.write( new_move );
+  make_the_move = function ( move, curr_players ) {
+    var index;
+    for ( index in curr_players ) {
+      if ( curr_players.hasOwnProperty( index ) ) {
+        curr_players[ index ].socket.write( move );
+      }
     }
-  }
+  };
+
+  move_up = function ( player_id ) {
+    var curr_players = players.curr_players,
+      player = curr_players[ player_id ],
+      player_no = player.player_no,
+      player_pad_pos = player.pad_position,
+      player_pad_new_pos = player_pad_pos - 1,
+      new_move;
+
+    if ( player_pad_new_pos !== 0 ) {
+      new_move = graphics.make_paddle( player_no, player_pad_new_pos );
+      make_the_move( new_move, curr_players );
+      player.pad_position = player_pad_new_pos;
+    }
+  };
+  
+  move_down = function ( player_id ) {
+    var curr_players = players.curr_players,
+      player = curr_players[ player_id ],
+      player_no = player.player_no,
+      player_pad_pos = player.pad_position,
+      player_pad_new_pos = player_pad_pos + 1,
+      new_move;
+
+    if ( player_pad_new_pos !== configMap.map_height - configMap.pad_height ) {
+      new_move = graphics.make_paddle( player_no, player_pad_new_pos );
+      make_the_move( new_move, curr_players );
+      player.pad_position = player_pad_new_pos;
+    }
+  };
+
+  move = function ( player_id, command ) {
+    if ( command === configMap.move_up ) {
+      move_up( player_id );
+    }
+    else if ( command === configMap.move_down ) {
+      move_down( player_id );
+    }
   };
 
   return {
@@ -69,33 +125,35 @@ players = ( function () {
     curr_players = {},
     
     player = {
-      map_received  : false
+      map_received  : false,
+      pad_position  : 10
     };
 
-    create_player = function ( id, socket) {
-      var new_player;
-      
-      new_player = Object.create( player );
-      new_player.id         = id;
-      new_player.socket     = socket;
-      new_player.player_no  = player_number++;
+  create_player = function ( id, socket) {
+    var new_player;
+    
+    new_player = Object.create( player );
+    new_player.id         = id;
+    new_player.socket     = socket;
+    new_player.player_no  = player_number++;
 
-      return new_player;
-    };
+    return new_player;
+  };
 
-    add_player = function ( id, socket ) {
+  add_player = function ( id, socket ) {
       curr_players[ id ] = create_player( id, socket );
-      return curr_players[ id ];
-   };
+  };
 
-   get_players = function () {
-     return curr_players;
-   };
+  get_players = function () {
+   return curr_players;
+  };
 
-    return {
-      add_player : add_player,
-      get_players    : get_players
-    };
+  return {
+    add_player : add_player,
+    get_players    : get_players,
+    curr_players : curr_players
+  };
+
 }());
 
 graphics = ( function () {
@@ -103,7 +161,7 @@ graphics = ( function () {
     make_map, get_map, make_paddle,
     append_start_position_paddle,
     append_reset_cursor_position,
-    initialize_map,
+    init_map,
     map;
 
 make_map = function () {
@@ -117,11 +175,11 @@ make_map = function () {
       else if ( h === configMap.map_height ) {
         map_string += configMap.map_border_tile;
       }
-      else if ( w === configMap.map_width) {
-        map_string += '\n';
-      }
       else {
         map_string += configMap.map_floor;
+      }
+      if ( w === configMap.map_width && h !== configMap.map_height ) {
+         map_string += '\n\r';
       }
     }
   }
@@ -136,15 +194,18 @@ get_map = function () {
     return map;
 };
 
-initialize_map = function ( user ) {
-    user.socket.write( '\033[2K\b' );
-    user.socket.write( get_map() );
-    if ( user.player_no === 0 ) {
-      user.socket.write( '\033[12;0f' );
-    }
-    else {
-      user.socket.write( '\033[12;79f' );
-    }
+init_map = function ( id ) {
+  var curr_players = players.curr_players,
+    player = curr_players[ id ];
+
+  player.socket.write( '\033[2K\r' );
+  player.socket.write( get_map() );
+  if ( player.player_no === 0 ) {
+    player.socket.write( '\033[12;1f' );
+  }
+  else {
+    player.socket.write( '\033[12;80f' );
+  }
 };
 
 append_reset_cursor_position = function ( player_no ) { 
@@ -172,14 +233,20 @@ make_paddle = function ( player_no, position ) {
 
     paddle_string += append_start_position_paddle( player_no );
 
-    for ( i = 0; i < map_height_minus_pad; i++ ) {
+    for ( i = 1; i <= map_height_minus_pad; i++ ) {
       if ( i === position ) {
-        for ( j = 0; j < configMap.pad_height; j++ ) {
-          paddle_string += configMap.pad_tile + '\b\033[B';
+        for ( j = 1; j <= configMap.pad_height; j++ ) {
+          paddle_string += configMap.pad_tile;
+          if ( i + j !== configMap.map_height ) {
+            paddle_string += '\b\033[B'; 
+          }
         }
       }
       else {
-        paddle_string += configMap.map_floor + '\b\033[B';
+        paddle_string += configMap.map_floor;
+        if ( i + j !== configMap.map_height ) {
+          paddle_string += '\b\033[B'; 
+        }
       }
     }
 
@@ -191,7 +258,7 @@ make_paddle = function ( player_no, position ) {
 return {
   get_map : get_map,
   make_paddle : make_paddle,
-  initialize_map : initialize_map
+  init_map : init_map
 };
 
 }());
@@ -202,7 +269,8 @@ return {
 //---------------- END MODULE INITILIZATION ------------------
 
 module.exports = {
-  graphics : graphics,
-  players  : players,
-  movement : movement
+  graphics  : graphics,
+  players   : players,
+  movement  : movement,
+  game      : game
 };
